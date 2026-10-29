@@ -1,9 +1,14 @@
-name: Publish two game editors
+name: Publish Tateehack from Release ZIP
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to deploy (example: web-v1)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,20 +21,46 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Extract website
+      - name: Download website ZIP from Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        shell: bash
         run: |
-          unzip -q TATEEHACK-Two-Games-GitHub.zip 'dist/*' -d website
+          set -euo pipefail
+          test -n "$RELEASE_TAG"
+          mkdir -p package
+          gh release download "$RELEASE_TAG" \
+            --repo "$GH_REPO" \
+            --pattern 'TATEEHACK-Two-Games-GitHub.zip' \
+            --dir package
+          test -s package/TATEEHACK-Two-Games-GitHub.zip
+
+      - name: Extract and check website
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -tq package/TATEEHACK-Two-Games-GitHub.zip
+          unzip -q package/TATEEHACK-Two-Games-GitHub.zip 'dist/*' -d website
           test -f website/dist/index.html
           test -f website/dist/rowe/index.html
           test -f website/dist/wishes.html
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('website/dist')
+          size = sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
+          print(f'Extracted website size: {size:,} bytes')
+          if size > 1_000_000_000:
+              raise SystemExit('Website exceeds the GitHub Pages 1 GB limit.')
+          PY
 
       - uses: actions/configure-pages@v5
 
